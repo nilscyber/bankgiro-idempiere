@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>org.notima</groupId>
   <artifactId>bankgiro-adempiere-swing</artifactId>
-  <version>2.0.2-SNAPSHOT</version>
+  <version>2.0.2</version>
   <name>Bankgiro ADempiere / iDempiere Swing UI</name>
 
   <description>UI to plugin to manage payments for Bankgirot</description>
@@ -22,7 +22,7 @@
   	<dependency>
   		<groupId>org.notima</groupId>
   		<artifactId>bankgiro-adempiere</artifactId>
-  		<version>2.0.2-SNAPSHOT</version>
+  		<version>2.0.2</version>
   	</dependency>
   </dependencies>
 
