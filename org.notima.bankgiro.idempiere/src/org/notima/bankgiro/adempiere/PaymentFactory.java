@@ -463,6 +463,7 @@ public abstract class PaymentFactory  implements Runnable {
     		if (order!=null) {
     			// Try to find invoice for order
     			invoice = lookupInvoiceUsingOrderIdAndBpDocumentNo(ctx, order.get_ID(), currentPayment.getBpInvoiceNo());
+    			currentPayment.setDescription(currentPayment.getOrderNo());
 
     		} else if (currentPayment.getBpInvoiceNo()!=null && (currentPayment.getBpCustomerNo()==null || currentPayment.getBpCustomerNo().trim().length()==0)) {
     			// Try to find invoice using bp document no
@@ -801,11 +802,19 @@ public abstract class PaymentFactory  implements Runnable {
 	 * @throws Exception
 	 */
 	protected MInvoice lookupInvoiceUsingOrderIdAndBpDocumentNo(Properties ctx, int orderId, String bpDocumentNo) throws Exception {
-		
-		List<MInvoice> invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=? AND BpDocumentNo=?", null)
-			.setParameters(new Object[]{orderId, bpDocumentNo})
-			.setApplyAccessFilter(true)
-			.list();
+
+		List<MInvoice> invoices;
+		if (bpDocumentNo!=null && bpDocumentNo.trim().length()>0) {
+			invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=? AND BpDocumentNo=?", null)
+				.setParameters(new Object[]{orderId, bpDocumentNo})
+				.setApplyAccessFilter(true)
+				.list();
+		} else {
+			invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=?", null)
+					.setParameters(new Object[]{orderId})
+					.setApplyAccessFilter(true)
+					.list();
+		}
 		if (invoices.size()>1) {
 			m_log.warning("BP Document No: " + bpDocumentNo + " for order_ID " + orderId + " is ambigous and can't be matched.");
 			return(null);
