@@ -53,7 +53,7 @@ public abstract class PaymentFactory  implements Runnable {
 	/**
 	 * Maximum number of uncompleted payments allowed for dry run not to become enabled.
 	 */
-	private static final int MAX_UNCOMPLETED_PAYMENTS = 15;
+	private static final int MAX_UNCOMPLETED_PAYMENTS = 30;
 	
 	protected Properties	m_ctx;
 	
@@ -463,7 +463,9 @@ public abstract class PaymentFactory  implements Runnable {
     		if (order!=null) {
     			// Try to find invoice for order
     			invoice = lookupInvoiceUsingOrderIdAndBpDocumentNo(ctx, order.get_ID(), currentPayment.getBpInvoiceNo());
-    			currentPayment.setDescription(currentPayment.getOrderNo());
+    			
+    			if (invoice==null && currentPayment.getOrderSum()>0)
+    				invoice = lookupInvoiceUsingOrderIdAndTotalSum(ctx, order.get_ID(), currentPayment.getOrderSum());
 
     		} else if (currentPayment.getBpInvoiceNo()!=null && (currentPayment.getBpCustomerNo()==null || currentPayment.getBpCustomerNo().trim().length()==0)) {
     			// Try to find invoice using bp document no
@@ -591,6 +593,14 @@ public abstract class PaymentFactory  implements Runnable {
 	        if (paymentReference!=null) {
 	        	payment.setR_PnRef(paymentReference);
 	        }
+	        // try to match to sales order
+	        if (currentPayment.getOrderNo()!=null) {	        	
+	        	MOrder o = new Query(ctx, MOrder.Table_Name, "documentno=?", trxName).setParameters(currentPayment.getOrderNo()).first();
+	        	if (o!=null && o.get_ID()>0) {
+	        		payment.setC_Order_ID(o.getC_Order_ID());
+	        	}
+	        }
+	        System.out.println("Order: " + payment.getC_Order().getDocumentNo());
 	        if (currentPayment.getOrderNo()!=null)
 	        	description.append(currentPayment.getOrderNo());
 	        if (currentPayment.getBpInvoiceNo()!=null) {
@@ -802,23 +812,43 @@ public abstract class PaymentFactory  implements Runnable {
 	 * @throws Exception
 	 */
 	protected MInvoice lookupInvoiceUsingOrderIdAndBpDocumentNo(Properties ctx, int orderId, String bpDocumentNo) throws Exception {
-
-		List<MInvoice> invoices;
-		if (bpDocumentNo!=null && bpDocumentNo.trim().length()>0) {
-			invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=? AND BpDocumentNo=?", null)
-				.setParameters(new Object[]{orderId, bpDocumentNo})
-				.setApplyAccessFilter(true)
-				.list();
-		} else {
-			invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=?", null)
-					.setParameters(new Object[]{orderId})
-					.setApplyAccessFilter(true)
-					.list();
-		}
+		
+		List<MInvoice> invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=? AND BpDocumentNo=?", null)
+			.setParameters(new Object[]{orderId, bpDocumentNo})
+			.setApplyAccessFilter(true)
+			.list();
 		if (invoices.size()>1) {
 			m_log.warning("BP Document No: " + bpDocumentNo + " for order_ID " + orderId + " is ambigous and can't be matched.");
 			return(null);
 		}
+		if (invoices.size()==0) return(null);
+		return(invoices.get(0));
+		
+	}
+	protected MInvoice lookupInvoiceUsingOrderIdAndTotalSum(Properties ctx, int orderId, Double totalSum) throws Exception {
+		
+		List<MInvoice> invoices = new Query(ctx, MInvoice.Table_Name, "C_Order_ID=? AND isPaid = 'N' ", null)
+			.setParameters(new Object[]{orderId})
+			.setApplyAccessFilter(true)
+			.setOrderBy(" created asc ")
+			.list();
+		if (invoices!=null && invoices.size()==1)
+			return invoices.get(0);
+		if (invoices.size()>1) {
+			for (MInvoice inv : invoices) {
+				
+				Double grandTot = inv.getGrandTotal().doubleValue();
+				Double diff = Math.abs(grandTot - totalSum);
+				if (diff < 1) {
+					return inv;
+				}
+			}
+		}
+		
+		//if (invoices.size()>1) {
+		//	m_log.warning("BP Document No: " + "" + " for order_ID " + orderId + " is ambigous and can't be matched.");
+		//	return(null);
+		//}
 		if (invoices.size()==0) return(null);
 		return(invoices.get(0));
 		
@@ -917,7 +947,7 @@ public abstract class PaymentFactory  implements Runnable {
 	 */
 	protected MOrder lookupOrder(Properties ctx, String documentNo) throws Exception {
 
-		List<MOrder> orders = new Query(ctx, MOrder.Table_Name, "DocumentNo=?", null)
+		List<MOrder> orders = new Query(ctx, MOrder.Table_Name, "DocumentNo=? AND docstatus NOT IN ('VO') ", null)
 		.setParameters(new Object[]{documentNo})
 		.setApplyAccessFilter(true)
 		.list();
