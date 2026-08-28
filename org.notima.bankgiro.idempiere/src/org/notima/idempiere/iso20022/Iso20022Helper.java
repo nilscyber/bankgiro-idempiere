@@ -16,7 +16,7 @@ public class Iso20022Helper {
 	/**
 	 * Tries to extract the most likely reference.
 	 *
-	 * @TODO: Make it more robust and handle more cases
+	 * TODO: Make it more robust and handle more cases
 	 *
 	 * @param stri
 	 * @return
