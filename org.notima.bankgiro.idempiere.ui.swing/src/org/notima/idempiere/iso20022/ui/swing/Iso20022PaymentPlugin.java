@@ -92,10 +92,11 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
     		return;
     	}
 
-    	// Get last directory
+    	// Get last directory. Ignore empty settings (the settings panel saves
+    	// blank fields too) so the chooser falls back to the default location.
     	MLBSettings lastDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_RECONCILIATION_DIR);
     	JFileChooser fc;
-    	if (lastDir!=null) {
+    	if (lastDir!=null && lastDir.getName()!=null && lastDir.getName().trim().length()>0) {
     		fc = new JFileChooser(lastDir.getName());
     	} else {
     		fc = new JFileChooser();
@@ -119,16 +120,14 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
         int retVal = fc.showDialog(m_frame, "Select file");
         if (retVal==JFileChooser.APPROVE_OPTION) {
             File reportFile = fc.getSelectedFile();
-            // Save last directory
+            // Save last directory as a per-user setting, and refresh the
+            // cached settings map so the same session sees the new value.
             try {
             	String lastDirStr = fc.getSelectedFile().getParentFile().getCanonicalPath();
-            	if (lastDir==null) {
-            		lastDir = new MLBSettings(Env.getCtx(), 0, null);
-            		lastDir.setValue(Iso20022Settings.ISO20022_RECONCILIATION_DIR);
+            	MLBSettings updated = MLBSettings.setSetting(Iso20022Settings.ISO20022_RECONCILIATION_DIR, lastDirStr);
+            	if (updated!=null) {
+            		PluginRegistry.registry.getLbSettings().put(Iso20022Settings.ISO20022_RECONCILIATION_DIR, updated);
             	}
-            	lastDir.setName(lastDirStr);
-            	lastDir.saveEx();
-
             } catch (java.io.IOException ioe) {
             }
 
