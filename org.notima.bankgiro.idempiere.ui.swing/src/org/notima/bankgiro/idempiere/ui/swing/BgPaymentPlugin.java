@@ -151,14 +151,35 @@ public class BgPaymentPlugin extends PaymentPlugin {
         m_frame.getVLBParent().getFrame().setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
 
         org.compiere.apps.SwingWorker worker = new org.compiere.apps.SwingWorker() {
+        	// If construct() lets an exception escape, SwingWorker never runs
+        	// finished() and the window stays locked in busy state, so catch
+        	// everything and report it from finished() instead.
+        	private Exception m_error;
             @Override
             public Object construct() {
-                m_process.run();
-                return (Boolean.TRUE);
+            	try {
+            		m_process.run();
+            		return (Boolean.TRUE);
+            	} catch (Exception e) {
+            		m_error = e;
+            		e.printStackTrace();
+            		return (Boolean.FALSE);
+            	}
             }
             @Override
             public void finished() {
-            	
+
+                if (m_error!=null) {
+                	m_frame.doneRunning();
+                	String fileName = m_process.getFile()!=null ? m_process.getFile().getName() : "??";
+                	Throwable cause = m_error.getCause()!=null ? m_error.getCause() : m_error;
+                	JOptionPane.showMessageDialog(m_frame,
+                			"Reading of file " + fileName + " failed:\n\n" + cause.getMessage() +
+                			"\n\nSee the error log for details.",
+                			fileName, JOptionPane.ERROR_MESSAGE);
+                	return;
+                }
+
                 // Save file info and move file to archive unless dryRun
             	if (!m_process.isDryRun()) {
             		

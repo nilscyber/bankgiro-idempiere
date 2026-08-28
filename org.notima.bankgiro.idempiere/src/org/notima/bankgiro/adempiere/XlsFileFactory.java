@@ -12,14 +12,15 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.SortedMap;
 
-import org.apache.poi.hssf.usermodel.HSSFCell;
-import org.apache.poi.hssf.usermodel.HSSFCellStyle;
-import org.apache.poi.hssf.usermodel.HSSFFont;
-import org.apache.poi.hssf.usermodel.HSSFRichTextString;
-import org.apache.poi.hssf.usermodel.HSSFRow;
-import org.apache.poi.hssf.usermodel.HSSFSheet;
 import org.apache.poi.hssf.usermodel.HSSFWorkbook;
-import org.apache.poi.hssf.util.HSSFColor;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.FillPatternType;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.HorizontalAlignment;
+import org.apache.poi.ss.usermodel.IndexedColors;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
 import org.compiere.model.MBankAccount;
 import org.compiere.model.MInvoice;
 import org.compiere.util.Env;
@@ -137,42 +138,41 @@ public class XlsFileFactory implements PaymentFileFactory {
         Date now = Calendar.getInstance().getTime();
         
         // Create new sheet
-        HSSFSheet sheet = wb.createSheet(df.format(now));
+        Sheet sheet = wb.createSheet(df.format(now));
         
         LbPaymentRow row;
         String currency;
-        HSSFCell cell;
-        HSSFRow	 xrow;
+        Cell cell;
+        Row	 xrow;
         String theirRef;
         int		rowNo = 0;
         short		cellNo = 0;
         
         
         // Date style
-        HSSFCellStyle dateStyle = wb.createCellStyle();
+        CellStyle dateStyle = wb.createCellStyle();
         dateStyle.setDataFormat(wb.createDataFormat().getFormat("yyyy-mm-dd"));
         
         // Header style
-        HSSFCellStyle headerStyle = wb.createCellStyle();
-        HSSFFont font = wb.createFont();
-        font.setBoldweight(HSSFFont.BOLDWEIGHT_BOLD);
-        org.apache.poi.hssf.util.HSSFColor yellow = new HSSFColor.YELLOW();
-        headerStyle.setFillForegroundColor(yellow.getIndex());
-        headerStyle.setFillPattern(HSSFCellStyle.SOLID_FOREGROUND);
+        CellStyle headerStyle = wb.createCellStyle();
+        Font font = wb.createFont();
+        font.setBold(true);
+        headerStyle.setFillForegroundColor(IndexedColors.YELLOW.getIndex());
+        headerStyle.setFillPattern(FillPatternType.SOLID_FOREGROUND);
         headerStyle.setFont(font);
-        headerStyle.setAlignment(HSSFCellStyle.ALIGN_CENTER);
+        headerStyle.setAlignment(HorizontalAlignment.CENTER);
         headerStyle.setWrapText(true);
         
         // Amount style
-        HSSFCellStyle amtStyle = wb.createCellStyle();
+        CellStyle amtStyle = wb.createCellStyle();
         amtStyle = wb.createCellStyle();
         amtStyle.setDataFormat(wb.createDataFormat().getFormat("#,###"));
         
         // Create header
     	xrow = sheet.createRow(rowNo++);
         for (int i=0; i<colNames.length; i++) {
-        	cell = xrow.createCell((short)i);
-        	cell.setCellValue(new HSSFRichTextString(colNames[i]));
+        	cell = xrow.createCell(i);
+        	cell.setCellValue(colNames[i]);
         	cell.setCellStyle(headerStyle);
         	sheet.setColumnWidth((short)i, (short)colWidth[i]);
         }
@@ -190,11 +190,11 @@ public class XlsFileFactory implements PaymentFileFactory {
             xrow = sheet.createRow(rowNo++);
             // Write payment info
             cellNo = 0;
-            cell = xrow.createCell(cellNo++, HSSFCell.CELL_TYPE_STRING);
-            cell.setCellValue(new HSSFRichTextString(row.getBpartner().getName()));
+            cell = xrow.createCell(cellNo++);
+            cell.setCellValue(row.getBpartner().getName());
             
             cell = xrow.createCell(cellNo++);
-            cell.setCellValue(new HSSFRichTextString(row.getInvoice().getDocumentNo()));
+            cell.setCellValue(row.getInvoice().getDocumentNo());
             
             if (row.getInvoice().get_Value("IsOCR")!=null && ((Boolean)row.getInvoice().get_Value("IsOCR")).booleanValue()) {
 				theirRef = row.getInvoice().get_ValueAsString("OCR");
@@ -202,12 +202,12 @@ public class XlsFileFactory implements PaymentFileFactory {
 				theirRef = row.getInvoice().get_ValueAsString("BPDocumentNo");
 			}            
             cell = xrow.createCell(cellNo++);
-            cell.setCellValue(new HSSFRichTextString(theirRef));
+            cell.setCellValue(theirRef);
 
             cell = xrow.createCell(cellNo++);
-            cell.setCellValue(new HSSFRichTextString(row.dstAcct));
+            cell.setCellValue(row.dstAcct);
 
-            cell = xrow.createCell(cellNo++, HSSFCell.CELL_TYPE_BLANK);
+            cell = xrow.createCell(cellNo++);
             cell.setCellValue(new java.util.Date(row.getInvoice().getDateInvoiced().getTime()));
             cell.setCellStyle(dateStyle);
             
@@ -228,7 +228,7 @@ public class XlsFileFactory implements PaymentFileFactory {
             cell.setCellStyle(amtStyle);
 
             cell = xrow.createCell(cellNo++);
-            cell.setCellValue(new HSSFRichTextString(row.currency));
+            cell.setCellValue(row.currency);
             
     	}   //  for all rows in table
 		

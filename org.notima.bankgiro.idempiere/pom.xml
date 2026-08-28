@@ -44,12 +44,22 @@
 		<dependency>
 			<groupId>net.sf.jasperreports</groupId>
 			<artifactId>jasperreports</artifactId>
-			<version>3.6.0</version>
+			<version>3.7.3</version>
 		</dependency>
 		<dependency>
 			<groupId>org.apache.poi</groupId>
 			<artifactId>poi</artifactId>
-			<version>3.0.1-FINAL</version>
+			<version>3.17</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml</artifactId>
+			<version>3.17</version>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.poi</groupId>
+			<artifactId>poi-ooxml-schemas</artifactId>
+			<version>3.17</version>
 		</dependency>
 	</dependencies>
 
@@ -69,8 +79,8 @@
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.0</version>
 				<configuration>
-					<source>1.6</source>
-					<target>1.6</target>
+					<source>1.8</source>
+					<target>1.8</target>
 				</configuration>
 			</plugin>
 			
@@ -100,6 +110,10 @@
 						</goals>
 					</execution>
 				</executions>
+        <configuration>
+          <source>1.8</source>
+          <target>1.8</target>
+        </configuration>				
 			</plugin>
 
 			<plugin>
