@@ -244,39 +244,18 @@ public class CAMT54PaymentFactory {
 			// Look in structured remittance information. Walk ALL blocks until
 			// a usable reference is found - SEB sends junk in some of them
 			// ("REF MISSING", comma-doubled numbers) with the real reference
-			// in a later block or in AddtlRmtInf.
-			// TODO: Allow for handling of more than one invoice in remittance list.
+			// in a later block or in AddtlRmtInf. Transactions paying several
+			// invoices are split before this method is called (see
+			// splittableRemittance).
 			if (ee.getRmtInf()!=null) {
-				List<StructuredRemittanceInformation7> remittanceList = ee.getRmtInf().getStrd();
-				for (StructuredRemittanceInformation7 r : remittanceList) {
-					if (isOCRReference(r)) {
-						String ref = cleanReference(Iso20022Helper.getMostLikelyReference(r));
-						if (isUsableReference(ref)) {
-							// Our references are plain invoice numbers, so use
-							// the reference as-is; a classic check-digited OCR
-							// is retried with the last digit stripped at
-							// lookup time (see processEntryTransaction).
+				for (StructuredRemittanceInformation7 r : ee.getRmtInf().getStrd()) {
+					String ref = extractReference(r);
+					if (ref!=null) {
+						if (isOCRReference(r)) {
 							rec.setPaymentReference(ref);
-							rec.setInvoiceNo(ref);
-							break;
 						}
-					} else {
-						String ref = cleanReference(Iso20022Helper.getMostLikelyReference(r));
-						if (!isUsableReference(ref)) {
-							// Fall back to AddtlRmtInf (e.g. Nb="REF MISSING"
-							// with the invoice number in AddtlRmtInf).
-							for (String addtl : r.getAddtlRmtInf()) {
-								String cand = cleanReference(addtl);
-								if (isUsableReference(cand)) {
-									ref = cand;
-									break;
-								}
-							}
-						}
-						if (isUsableReference(ref)) {
-							rec.setInvoiceNo(ref);
-							break;
-						}
+						rec.setInvoiceNo(ref);
+						break;
 					}
 				}
 			}
@@ -284,6 +263,23 @@ public class CAMT54PaymentFactory {
 			rec.setInvoiceNo(ourRef);
 		}
 
+	}
+
+	/**
+	 * Extracts a usable reference from one structured remittance block: the
+	 * document/creditor reference if usable, otherwise a numeric AddtlRmtInf
+	 * entry (e.g. Nb="REF MISSING" with the invoice number in AddtlRmtInf).
+	 * References are plain invoice document numbers - no check digit is
+	 * stripped.
+	 */
+	private String extractReference(StructuredRemittanceInformation7 r) {
+		String ref = cleanReference(Iso20022Helper.getMostLikelyReference(r));
+		if (isUsableReference(ref)) return ref;
+		for (String addtl : r.getAddtlRmtInf()) {
+			String cand = cleanReference(addtl);
+			if (isUsableReference(cand)) return cand;
+		}
+		return null;
 	}
 
 	/**
@@ -328,13 +324,76 @@ public class CAMT54PaymentFactory {
 
 	private void processEntryTransaction(EntryTransaction2 ee) {
 
+		// One transfer can pay several invoices, each structured remittance
+		// block carrying its own reference and amount. Split into one payment
+		// record per invoice when every block has both and the amounts sum
+		// exactly to the transaction amount; anything else is handled as a
+		// single record.
+		List<StructuredRemittanceInformation7> parts = splittableRemittance(ee);
+		if (parts != null) {
+			for (StructuredRemittanceInformation7 r : parts) {
+				processTransactionPart(ee, extractReference(r), isOCRReference(r),
+						r.getRfrdDocAmt().getRmtdAmt().getValue());
+			}
+			return;
+		}
+
+		processTransactionPart(ee, null, false, null);
+
+	}
+
+	/**
+	 * Returns the structured remittance blocks of a transaction that pays
+	 * several invoices at once, when it can be safely split: at least two
+	 * blocks, every block with a usable reference and a remitted amount in
+	 * the transaction currency, no credit notes, and the amounts summing
+	 * exactly to the transaction amount. Otherwise null.
+	 */
+	private List<StructuredRemittanceInformation7> splittableRemittance(EntryTransaction2 ee) {
+
+		if (ee.getRefs()!=null && ee.getRefs().getEndToEndId()!=null) return null;
+		if (ee.getRmtInf()==null) return null;
+		List<StructuredRemittanceInformation7> strds = ee.getRmtInf().getStrd();
+		if (strds==null || strds.size()<2) return null;
+		if (ee.getAmtDtls()==null || ee.getAmtDtls().getTxAmt()==null) return null;
+
+		ActiveOrHistoricCurrencyAndAmount txAmt = ee.getAmtDtls().getTxAmt().getAmt();
+		BigDecimal sum = BigDecimal.ZERO;
+		for (StructuredRemittanceInformation7 r : strds) {
+			if (extractReference(r)==null) return null;
+			if (r.getRfrdDocAmt()==null || r.getRfrdDocAmt().getRmtdAmt()==null
+					|| r.getRfrdDocAmt().getRmtdAmt().getValue()==null) return null;
+			if (r.getRfrdDocAmt().getCdtNoteAmt()!=null) return null;
+			String ccy = r.getRfrdDocAmt().getRmtdAmt().getCcy();
+			if (ccy!=null && !ccy.equals(txAmt.getCcy())) return null;
+			sum = sum.add(r.getRfrdDocAmt().getRmtdAmt().getValue());
+		}
+		if (sum.compareTo(txAmt.getValue())!=0) return null;
+
+		return strds;
+	}
+
+	/**
+	 * Creates one payment record for a transaction, or for one invoice's part
+	 * of a multi-invoice transaction (partRef/partAmount set).
+	 */
+	private void processTransactionPart(EntryTransaction2 ee, String partRef,
+			boolean partIsOcr, BigDecimal partAmount) {
+
 		// This record is used to comply with previous jasper reports.
 		LbPayment lbPayment = new LbPayment();
 
 		PaymentExtendedRecord rec = new PaymentExtendedRecord();
 		rec.setBankAccountPtr(ba);
 
-		setInvoiceReferenceFromTransaction(rec, ee);
+		if (partRef != null) {
+			rec.setInvoiceNo(partRef);
+			if (partIsOcr) {
+				rec.setPaymentReference(partRef);
+			}
+		} else {
+			setInvoiceReferenceFromTransaction(rec, ee);
+		}
 
 		// Cyberphoto: web/Swish payments carry the order number as reference
 		// rather than the invoice number. Setting it as order no as well lets
@@ -344,7 +403,12 @@ public class CAMT54PaymentFactory {
 			rec.setOrderNo(rec.getInvoiceNo());
 		}
 
-		setAmountFromTransaction(rec, ee);
+		if (partAmount != null) {
+			rec.setCurrency(ee.getAmtDtls().getTxAmt().getAmt().getCcy());
+			rec.setOrderSum(partAmount.doubleValue());
+		} else {
+			setAmountFromTransaction(rec, ee);
+		}
 
 		// Cyberphoto: Swish payments already have a completed payment created
 		// at order time (se.cyberphoto.swish.SwishPaymentAddDetails, same bank
