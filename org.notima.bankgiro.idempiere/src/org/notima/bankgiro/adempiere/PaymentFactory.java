@@ -523,6 +523,20 @@ public abstract class PaymentFactory  implements Runnable {
         if (bpartner==null && otherPayment!=null) {
         	bpartner = (MBPartner)otherPayment.getC_BPartner();
         }
+        // Last resort: a voided order still identifies the payer. lookupOrder
+        // excludes voided orders from matching (correctly - no invoice should
+        // be matched through them), but a Qliro/Swish settlement can reference
+        // an order that was voided before the file arrived, and without the BP
+        // the C_Order_ID reference set further down makes MPayment fail with
+        // "BP different from BP Order" and abort the whole file.
+        if (bpartner==null && order==null && currentPayment.getOrderNo()!=null) {
+        	MOrder voidedOrder = new Query(ctx, MOrder.Table_Name, "DocumentNo=? AND AD_Client_ID=?", trxName)
+        			.setParameters(new Object[]{currentPayment.getOrderNo(), Env.getAD_Client_ID(ctx)})
+        			.first();
+        	if (voidedOrder!=null) {
+        		bpartner = (MBPartner)voidedOrder.getC_BPartner();
+        	}
+        }
         
         // If there's a tax id supplied, cross check and/or use tax id to find business partner
         List<MBPartner> checkBPartners = null;
@@ -616,8 +630,10 @@ public abstract class PaymentFactory  implements Runnable {
 	        	payment.setR_PnRef(paymentReference);
 	        }
 	        // try to match to sales order
-	        if (currentPayment.getOrderNo()!=null) {	        	
-	        	MOrder o = new Query(ctx, MOrder.Table_Name, "documentno=?", trxName).setParameters(currentPayment.getOrderNo()).first();
+	        if (currentPayment.getOrderNo()!=null) {
+	        	MOrder o = new Query(ctx, MOrder.Table_Name, "documentno=? AND AD_Client_ID=?", trxName)
+	        			.setParameters(new Object[]{currentPayment.getOrderNo(), Env.getAD_Client_ID(ctx)})
+	        			.first();
 	        	if (o!=null && o.get_ID()>0) {
 	        		payment.setC_Order_ID(o.getC_Order_ID());
 	        	}
