@@ -241,18 +241,42 @@ public class CAMT54PaymentFactory {
 		}
 
 		if (ourRef==null) {
-			// Look in structured remittance information
+			// Look in structured remittance information. Walk ALL blocks until
+			// a usable reference is found - SEB sends junk in some of them
+			// ("REF MISSING", comma-doubled numbers) with the real reference
+			// in a later block or in AddtlRmtInf.
+			// TODO: Allow for handling of more than one invoice in remittance list.
 			if (ee.getRmtInf()!=null) {
 				List<StructuredRemittanceInformation7> remittanceList = ee.getRmtInf().getStrd();
-				// TODO: Allow for handling of more than one invoice in remittance list.
 				for (StructuredRemittanceInformation7 r : remittanceList) {
 					if (isOCRReference(r)) {
-						rec.setPaymentReference(Iso20022Helper.getMostLikelyReference(r));
-						rec.setInvoiceNo(rec.getPaymentReference().substring(0, rec.getPaymentReference().length()-1));
-						break;
+						String ref = cleanReference(Iso20022Helper.getMostLikelyReference(r));
+						if (isUsableReference(ref)) {
+							// Our references are plain invoice numbers, so use
+							// the reference as-is; a classic check-digited OCR
+							// is retried with the last digit stripped at
+							// lookup time (see processEntryTransaction).
+							rec.setPaymentReference(ref);
+							rec.setInvoiceNo(ref);
+							break;
+						}
 					} else {
-						rec.setInvoiceNo(Iso20022Helper.getMostLikelyReference(r));
-						break;
+						String ref = cleanReference(Iso20022Helper.getMostLikelyReference(r));
+						if (!isUsableReference(ref)) {
+							// Fall back to AddtlRmtInf (e.g. Nb="REF MISSING"
+							// with the invoice number in AddtlRmtInf).
+							for (String addtl : r.getAddtlRmtInf()) {
+								String cand = cleanReference(addtl);
+								if (isUsableReference(cand)) {
+									ref = cand;
+									break;
+								}
+							}
+						}
+						if (isUsableReference(ref)) {
+							rec.setInvoiceNo(ref);
+							break;
+						}
 					}
 				}
 			}
@@ -260,6 +284,45 @@ public class CAMT54PaymentFactory {
 			rec.setInvoiceNo(ourRef);
 		}
 
+	}
+
+	/**
+	 * Normalizes a remittance reference: trims, and collapses comma-separated
+	 * lists ("9269631,9269631") to a single token - the distinct value when
+	 * all tokens are equal, otherwise the first token.
+	 */
+	private String cleanReference(String ref) {
+		if (ref==null) return null;
+		ref = ref.trim();
+		if (ref.indexOf(',')<0) return ref;
+		String first = null;
+		boolean allEqual = true;
+		for (String token : ref.split(",")) {
+			token = token.trim();
+			if (token.length()==0) continue;
+			if (first==null) {
+				first = token;
+			} else if (!first.equals(token)) {
+				allEqual = false;
+			}
+		}
+		if (first!=null && !allEqual) {
+			paymentFactory.getLogger().warning("Multiple references in \"" + ref + "\" - using " + first);
+		}
+		return first;
+	}
+
+	/**
+	 * Returns true if the reference looks like something we can match on:
+	 * digits only, reasonable length. Filters out junk like "REF MISSING".
+	 */
+	private boolean isUsableReference(String ref) {
+		if (ref==null) return false;
+		if (ref.length()<4 || ref.length()>20) return false;
+		for (int i=0; i<ref.length(); i++) {
+			if (!Character.isDigit(ref.charAt(i))) return false;
+		}
+		return true;
 	}
 
 
