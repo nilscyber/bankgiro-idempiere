@@ -412,6 +412,28 @@ public abstract class PaymentFactory  implements Runnable {
 	 * @return 	The created payment is returned in the adempierePaymentField of the returned PaymentExtendedRecord
 	 * @throws Exception
 	 */
+	/**
+	 * Describes the payment being saved, for error messages - a failed file
+	 * run should point out the exact record (payer, amount, order, BP).
+	 */
+	private String describeFailedPayment(PaymentExtendedRecord rec, MPayment payment) {
+		StringBuilder sb = new StringBuilder("Could not save payment");
+		if (rec.getName()!=null && rec.getName().trim().length()>0)
+			sb.append(" from \"" + rec.getName() + "\"");
+		sb.append(", amount " + rec.getOrderSum() + (rec.getCurrency()!=null ? " " + rec.getCurrency() : ""));
+		if (rec.getOrderNo()!=null && rec.getOrderNo().trim().length()>0)
+			sb.append(", order no " + rec.getOrderNo());
+		if (rec.getInvoiceNo()!=null && rec.getInvoiceNo().trim().length()>0)
+			sb.append(", invoice no " + rec.getInvoiceNo());
+		if (rec.getBpInvoiceNo()!=null && rec.getBpInvoiceNo().trim().length()>0)
+			sb.append(", their ref " + rec.getBpInvoiceNo());
+		if (rec.getBPartner()!=null)
+			sb.append(", BP " + rec.getBPartner().getValue() + " \"" + rec.getBPartner().getName() + "\"");
+		if (payment!=null && payment.getC_Order_ID()>0)
+			sb.append(", payment C_Order_ID " + payment.getC_Order_ID());
+		return sb.toString();
+	}
+
     protected PaymentExtendedRecord createPayment(Properties ctx, PaymentExtendedRecord currentPayment, String trxName, int ourBankAccountID, int currencyId) throws Exception {
 		MInvoice	invoice = null;
 		MOrder		order = null;
@@ -663,13 +685,24 @@ public abstract class PaymentFactory  implements Runnable {
 	        try {
 	        	payment.saveEx();
 	        } catch (org.adempiere.exceptions.AdempiereException ee) {
-	        	if (ee.getMessage().contains("BP different from BP")) {
-	        		// Remove the invoice reference
-	        		payment.addDescription(ee.getMessage());
+	        	String errMsg = ee.getMessage()!=null ? ee.getMessage() : "";
+	        	if (errMsg.contains("BP different from BP") && !errMsg.contains("BP Order")) {
+	        		// The BP on the matched invoice differs - drop the invoice
+	        		// reference and keep the payment. A "BP different from BP
+	        		// Order" mismatch cannot be recovered this way (the order
+	        		// reference is the conflict), so that one fails the run
+	        		// with a description of the record instead.
+	        		payment.addDescription(errMsg);
 	        		payment.setC_Invoice_ID(0);
-	        		payment.saveEx();
+	        		try {
+	        			payment.saveEx();
+	        		} catch (org.adempiere.exceptions.AdempiereException e2) {
+	        			throw new org.adempiere.exceptions.AdempiereException(
+	        					describeFailedPayment(currentPayment, payment) + ": " + e2.getMessage(), e2);
+	        		}
 	        	} else {
-	        		throw ee;
+	        		throw new org.adempiere.exceptions.AdempiereException(
+	        				describeFailedPayment(currentPayment, payment) + ": " + errMsg, ee);
 	        	}
 	        }
     	} else {
