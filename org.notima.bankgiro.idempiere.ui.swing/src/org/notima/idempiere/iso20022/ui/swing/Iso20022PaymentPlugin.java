@@ -18,10 +18,16 @@ import javax.swing.JFileChooser;
 import javax.swing.JOptionPane;
 import javax.swing.filechooser.FileFilter;
 
+import org.compiere.model.MBankAccount;
 import org.compiere.util.Env;
+import org.notima.bankgiro.adempiere.LbPaymentRow;
+import org.notima.bankgiro.adempiere.MessageCenter;
 import org.notima.bankgiro.adempiere.PaymentExtendedRecord;
 import org.notima.bankgiro.adempiere.PaymentFactory;
+import org.notima.bankgiro.adempiere.PaymentFileFactory;
+import org.notima.bankgiro.adempiere.PaymentFileWorker;
 import org.notima.bankgiro.adempiere.PluginRegistry;
+import org.notima.idempiere.iso20022.Iso20022FileFactory;
 import org.notima.bankgiro.adempiere.form.I_LBSettingsPanel;
 import org.notima.bankgiro.adempiere.form.VLBManagementPanel;
 import org.notima.bankgiro.adempiere.model.MLBFile;
@@ -44,6 +50,7 @@ import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
  */
 public class Iso20022PaymentPlugin extends PaymentPlugin {
 
+	private Action			m_actionCreateFile;
 	private Action			m_actionReadFile;
 	private Action			m_actionReadReceivables;
 
@@ -52,6 +59,18 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 	public Iso20022PaymentPlugin(Properties ctx, VLBManagementPanel frame)
 			throws Exception {
 		super(ctx, frame);
+
+		m_actionCreateFile = new AbstractAction() {
+
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				createFile();
+			}
+
+		};
+		m_actionCreateFile.putValue(Action.NAME, "Create ISO20022 File");
 
 		m_actionReadFile = new AbstractAction() {
 
@@ -78,6 +97,41 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 		};
 		m_actionReadReceivables.putValue(Action.NAME, "Read receivables file ISO20022");
 		m_actionReadReceivables.putValue(Action.SHORT_DESCRIPTION, "Read receivables file ISO20022");
+
+	}
+
+	/**
+	 * Creates outgoing payment file (PAIN format). Called from m_actionCreateFile.
+	 */
+	private void createFile() {
+
+        // Iterate through all rows in the table, skip the ones with wrong currency
+        List<LbPaymentRow> checkedRows = m_frame.getPayablesModel().getSelected();
+
+        MBankAccount senderBankAccount = m_frame.getSelectedBankAccount();
+
+        PaymentFileFactory f = PluginRegistry.registry.getFileFactory(Iso20022FileFactory.KEY);
+
+        if (f==null) {
+        	f = new Iso20022FileFactory();
+        	PluginRegistry.registry.addPaymentFileFactory(f);
+        }
+
+        MLBSettings oDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_OUTPUT_DIR);
+        String outputDir =  oDir!=null ? oDir.getName() : null;
+
+        if (outputDir==null) {
+        	MessageCenter.error(null, "No output dir", "No output directory defined for ISO20022-files");
+        	return;
+        }
+
+        String result = PaymentFileWorker.createFile(f, senderBankAccount, checkedRows, new File(outputDir));
+
+        if (result!=null)
+        	MessageCenter.error(result);
+
+        // Refresh
+        m_frame.runRefresh();
 
 	}
 
@@ -333,7 +387,7 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 	@Override
 	public Action[] getActions() {
-		return new Action[]{m_actionReadFile};
+		return new Action[]{m_actionCreateFile, m_actionReadFile};
 	}
 
 	@Override
@@ -343,7 +397,7 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 	@Override
 	public Action[] getPayableActions() {
-		return new Action[]{m_actionReadFile};
+		return new Action[]{m_actionCreateFile, m_actionReadFile};
 	}
 
 	@Override

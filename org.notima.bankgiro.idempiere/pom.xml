@@ -113,7 +113,11 @@
         <configuration>
           <source>1.8</source>
           <target>1.8</target>
-        </configuration>				
+          <!-- The generated JAXB classes (entity.pain, camt_054_001) contain
+               raw XML fragments in their javadoc, which JDK 8's doclint
+               treats as fatal errors. -->
+          <additionalparam>-Xdoclint:none</additionalparam>
+        </configuration>
 			</plugin>
 
 			<plugin>
