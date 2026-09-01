@@ -6,23 +6,30 @@ import java.io.InputStreamReader;
 import java.io.PushbackReader;
 import java.math.BigDecimal;
 import java.nio.charset.Charset;
+import java.sql.Timestamp;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Properties;
 import java.util.SortedMap;
 
+import javax.swing.JOptionPane;
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.Unmarshaller;
 
 import org.adempiere.exceptions.AdempiereException;
 import org.compiere.model.MBPartner;
 import org.compiere.model.MBankAccount;
+import org.compiere.model.MCurrency;
 import org.compiere.model.MDocType;
 import org.compiere.model.MInvoice;
 import org.compiere.model.MOrder;
 import org.compiere.model.MPayment;
 import org.compiere.model.Query;
+import org.compiere.process.DocAction;
 import org.compiere.util.Env;
+import org.compiere.util.Ini;
+import org.compiere.util.Trx;
 import org.notima.bankgiro.adempiere.PaymentExtendedRecord;
 import org.notima.bankgiro.adempiere.PluginRegistry;
 import org.notima.bankgiro.adempiere.model.MLBSettings;
@@ -126,6 +133,293 @@ public class CAMT54PaymentFactory {
 
 		return true;
 
+	}
+
+	/**
+	 * Returns true if this file notifies about debits (our outgoing payments)
+	 * rather than credits (incoming customer payments). SEB marks the group
+	 * header with /DEBT/ or /CRED/.
+	 */
+	public boolean isDebitNotification() {
+		String addtlInf = document.getBkToCstmrDbtCdtNtfctn().getGrpHdr()!=null
+				? document.getBkToCstmrDbtCdtNtfctn().getGrpHdr().getAddtlInf() : null;
+		if (addtlInf!=null) {
+			if (addtlInf.contains("DEBT")) return true;
+			if (addtlInf.contains("CRED")) return false;
+		}
+		// Fallback: look at the first entry
+		for (AccountNotification2 s : document.getBkToCstmrDbtCdtNtfctn().getNtfctn()) {
+			for (ReportEntry2 e : s.getNtry()) {
+				return CreditDebitCode.DBIT.equals(e.getCdtDbtInd());
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Reconciles a debit notification: our payments to vendors, created with
+	 * the outbound PAIN flow. Modeled on CreateLbPayments: each structured
+	 * remittance block (one per vendor invoice, matching the outbound
+	 * bucketing) is matched to the vendor invoice via its reference (OCR /
+	 * BPDocumentNo / our document no), an AP payment is created against it
+	 * inside the transaction and the invoice's LbStatus is set to PAID.
+	 * Unmatched blocks become records without payment in the not-processed
+	 * list - no unknown-payer payments are ever created.
+	 */
+	public List<PaymentExtendedRecord> createDebitPayments(Properties props) throws Exception {
+
+		String localTrxName = Trx.createTrxName();
+		Trx trx = Trx.get(localTrxName, true);
+		trx.start();
+
+		List<PaymentExtendedRecord> records = new ArrayList<PaymentExtendedRecord>();
+		List<MPayment> paymentsToProcess = new ArrayList<MPayment>();
+		Properties ctx = Env.getCtx();
+
+		try {
+
+			for (AccountNotification2 s : document.getBkToCstmrDbtCdtNtfctn().getNtfctn()) {
+
+				ba = lookupBankAccount(s.getAcct());
+				paymentFactory.setBankAccount(ba);
+
+				for (ReportEntry2 e : s.getNtry()) {
+
+					if (CreditDebitCode.CRDT.equals(e.getCdtDbtInd())) {
+						paymentFactory.getLogger().warning(
+								"Credit entry " + e.getNtryRef() + " in a debit notification - skipped.");
+						continue;
+					}
+
+					dte = e.getBookgDt()!=null ? e.getBookgDt() : e.getValDt();
+					Date trxDate = dte.getDt().toGregorianCalendar().getTime();
+					paymentFactory.setTrxDate(trxDate);
+
+					for (EntryDetails1 det : e.getNtryDtls()) {
+						for (EntryTransaction2 ee : det.getTxDtls()) {
+							processDebitTransaction(ee, trxDate, ctx, localTrxName,
+									records, paymentsToProcess);
+						}
+					}
+				}
+			}
+
+			// The same safety valves as the standard flow: if most of the file
+			// could not be matched, save nothing.
+			int notProcessed = 0;
+			for (PaymentExtendedRecord r : records) {
+				if (r.getAdempierePayment()==null) notProcessed++;
+			}
+			int processed = records.size() - notProcessed;
+			if (processed < notProcessed && records.size() > 2) {
+				if (Ini.isClient()) {
+					JOptionPane.showMessageDialog(null,
+							"The number of payments to process is smaller than the number of not processed payments. Setting to dry run (nothing is saved)");
+				}
+				paymentFactory.setDryRun(true);
+			}
+
+			if (!paymentFactory.isDryRun()) {
+				trx.commit();
+			} else {
+				trx.rollback();
+				for (PaymentExtendedRecord r : records) {
+					r.setProcessed(true);
+				}
+			}
+
+		} catch (Exception ex) {
+			trx.rollback();
+			trx.close();
+			throw ex;
+		}
+
+		// Complete the matched payments after the successful commit
+		if (!paymentFactory.isDryRun()) {
+			trx.start();
+			for (MPayment pmt : paymentsToProcess) {
+				try {
+					if (pmt.processIt(DocAction.ACTION_Complete)) {
+						pmt.saveEx(localTrxName);
+					}
+				} catch (Exception ee) {
+					paymentFactory.getLogger().warning(
+							"Could not complete payment " + pmt.getDocumentNo() + " : " + ee.getMessage());
+				}
+			}
+			trx.commit();
+		}
+		trx.close();
+
+		for (PaymentExtendedRecord r : records) {
+			if (r.getAdempierePayment()==null) {
+				paymentFactory.addNotProcessed(r);
+			}
+		}
+
+		return records;
+	}
+
+	private void processDebitTransaction(EntryTransaction2 ee, Date trxDate, Properties ctx,
+			String localTrxName, List<PaymentExtendedRecord> records, List<MPayment> paymentsToProcess) {
+
+		String cdtrName = null;
+		if (ee.getRltdPties()!=null && ee.getRltdPties().getCdtr()!=null) {
+			cdtrName = ee.getRltdPties().getCdtr().getNm();
+		}
+		String endToEndId = ee.getRefs()!=null ? ee.getRefs().getEndToEndId() : null;
+		String txCcy = ee.getAmtDtls().getTxAmt().getAmt().getCcy();
+
+		List<StructuredRemittanceInformation7> strds =
+				ee.getRmtInf()!=null ? ee.getRmtInf().getStrd() : null;
+
+		if (strds==null || strds.isEmpty()) {
+			// No references at all (bank charges, manual transfers): report
+			// only, never guess.
+			PaymentExtendedRecord rec = newDebitRecord(cdtrName, txCcy, trxDate);
+			rec.setOrderSum(ee.getAmtDtls().getTxAmt().getAmt().getValue().doubleValue());
+			String ustrd = (ee.getRmtInf()!=null && !ee.getRmtInf().getUstrd().isEmpty())
+					? ee.getRmtInf().getUstrd().get(0) : endToEndId;
+			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ustrd!=null ? ustrd : ""));
+			records.add(rec);
+			return;
+		}
+
+		for (StructuredRemittanceInformation7 r : strds) {
+
+			boolean isOcr = isOCRReference(r);
+			String ref = cleanReference(
+					r.getCdtrRefInf()!=null && r.getCdtrRefInf().getRef()!=null
+						? r.getCdtrRefInf().getRef()
+						: (!r.getRfrdDocInf().isEmpty() ? r.getRfrdDocInf().get(0).getNb() : null));
+
+			BigDecimal amount = null;
+			if (r.getRfrdDocAmt()!=null) {
+				if (r.getRfrdDocAmt().getRmtdAmt()!=null) {
+					amount = r.getRfrdDocAmt().getRmtdAmt().getValue();
+				} else if (r.getRfrdDocAmt().getCdtNoteAmt()!=null) {
+					amount = r.getRfrdDocAmt().getCdtNoteAmt().getValue().negate();
+				}
+			}
+
+			PaymentExtendedRecord rec = newDebitRecord(cdtrName, txCcy, trxDate);
+			if (amount!=null) rec.setOrderSum(amount.doubleValue());
+			rec.setBpInvoiceNo(ref);
+			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ref!=null ? ref : ""));
+
+			MInvoice invoice = (ref!=null && amount!=null)
+					? matchVendorInvoice(ctx, ref, endToEndId, amount, localTrxName) : null;
+
+			if (invoice==null) {
+				records.add(rec);
+				continue;
+			}
+
+			try {
+				double amt = Math.round(amount.doubleValue()*100)/100.0;
+
+				invoice.set_ValueOfColumn("LbStatus",
+						Integer.valueOf(org.notima.bankgiro.adempiere.LbPaymentRow.PAYSTATUS_PAID));
+				invoice.saveEx(localTrxName);
+				rec.setInvoice(invoice);
+				rec.setInvoiceNo(invoice.getDocumentNo());
+				rec.setBPartner(new MBPartner(ctx, invoice.getC_BPartner_ID(), localTrxName));
+
+				MPayment payment = new MPayment(ctx, 0, localTrxName);
+				payment.set_ValueOfColumn("AD_Client_ID", Integer.valueOf(paymentFactory.getClientId()));
+				payment.setAD_Org_ID(paymentFactory.getOrgId());
+				payment.setC_DocType_ID(false);		// AP Payment
+				payment.setC_BankAccount_ID(ba.get_ID());
+				payment.setC_BPartner_ID(invoice.getC_BPartner_ID());
+				payment.setC_Currency_ID(MCurrency.get(ctx, txCcy).get_ID());
+				if (isOcr && ref!=null) {
+					payment.set_CustomColumn("OCR", ref);
+				}
+				payment.setTenderType(org.notima.bankgiro.adempiere.BGPaymentModelValidator.TENDERTYPE_Bankgiro);
+				payment.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ref!=null ? ref : ""));
+				payment.setDateAcct(new Timestamp(trxDate.getTime()));
+				payment.setDateTrx(new Timestamp(trxDate.getTime()));
+				payment.setAmount(payment.getC_Currency_ID(), new BigDecimal(Double.toString(amt)));
+				payment.setC_Invoice_ID(invoice.get_ID());
+				payment.set_CustomColumn("IsOCR", invoice.get_Value("IsOCR"));
+				double openAmount = invoice.getOpenAmt().doubleValue();
+				double pmtDiff = openAmount - amt;
+				if (pmtDiff!=0) {
+					if (Math.abs(pmtDiff) > paymentFactory.getAmountThreshold()) {
+						payment.setOverUnderAmt(new BigDecimal(Double.toString(pmtDiff)));
+					} else {
+						payment.setDiscountAmt(new BigDecimal(Double.toString(pmtDiff)));
+					}
+				}
+				payment.setIsApproved(true);
+				payment.saveEx(localTrxName);
+				rec.setAdempierePayment(payment);
+				rec.setBPartnerIdentified(true);
+
+				if (paymentFactory.isAutoCompleteEnabled() && !payment.isOverUnderPayment()) {
+					paymentsToProcess.add(payment);
+				}
+			} catch (Exception ex) {
+				paymentFactory.getLogger().warning("Could not create payment for "
+						+ (cdtrName!=null ? cdtrName : "?") + " ref " + ref + ": " + ex.getMessage());
+				rec.setAdempierePayment(null);
+			}
+
+			records.add(rec);
+		}
+	}
+
+	private PaymentExtendedRecord newDebitRecord(String cdtrName, String ccy, Date trxDate) {
+		PaymentExtendedRecord rec = new PaymentExtendedRecord();
+		rec.setBankAccountPtr(ba);
+		rec.setName(cdtrName);
+		rec.setCurrency(ccy);
+		rec.setTrxDate(trxDate);
+		LbPayment lbPayment = new LbPayment();
+		lbPayment.setDstName(cdtrName);
+		rec.setTransaction(lbPayment);
+		return rec;
+	}
+
+	/**
+	 * Finds the vendor invoice a remittance block refers to. The reference is
+	 * the vendor's own invoice number (BPDocumentNo), the OCR, or - via the
+	 * transaction's EndToEndId - our document number. Ambiguities are resolved
+	 * by preferring invoices in transit (LbStatus=2) and matching open amount;
+	 * if still ambiguous, no match is returned.
+	 */
+	private MInvoice matchVendorInvoice(Properties ctx, String ref, String endToEndId,
+			BigDecimal amount, String localTrxName) {
+
+		List<MInvoice> candidates = new Query(ctx, MInvoice.Table_Name,
+				"AD_Client_ID=? AND IsSoTrx='N' AND DocStatus IN ('CO','CL') AND IsPaid='N'"
+				+ " AND (OCR=? OR BPDocumentNo=? OR DocumentNo=? OR DocumentNo=?)",
+				localTrxName)
+				.setParameters(new Object[]{ Env.getAD_Client_ID(ctx), ref, ref, ref,
+						endToEndId!=null ? endToEndId : ref })
+				.list();
+
+		if (candidates.isEmpty()) return null;
+		if (candidates.size()==1) return candidates.get(0);
+
+		List<MInvoice> inTransit = new ArrayList<MInvoice>();
+		for (MInvoice iv : candidates) {
+			Object st = iv.get_Value("LbStatus");
+			if (st!=null && ((Number)st).intValue()==org.notima.bankgiro.adempiere.LbPaymentRow.PAYSTATUS_INTRANSIT) {
+				inTransit.add(iv);
+			}
+		}
+		if (inTransit.size()==1) return inTransit.get(0);
+
+		List<MInvoice> pool = inTransit.isEmpty() ? candidates : inTransit;
+		MInvoice amountMatch = null;
+		for (MInvoice iv : pool) {
+			if (Math.abs(iv.getOpenAmt().doubleValue() - amount.doubleValue()) < 0.01) {
+				if (amountMatch!=null) return null;	// still ambiguous
+				amountMatch = iv;
+			}
+		}
+		return amountMatch;
 	}
 
 	public List<PaymentExtendedRecord> getSourcePayments(Properties props)

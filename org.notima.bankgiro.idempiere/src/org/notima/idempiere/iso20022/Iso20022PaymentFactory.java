@@ -57,6 +57,36 @@ public class Iso20022PaymentFactory extends PaymentFactory {
 	}
 
 	/**
+	 * Debit notifications (our payments to vendors) are handled with their own
+	 * routine modeled on CreateLbPayments: match each remittance block to a
+	 * vendor invoice, create the AP payment and mark the invoice paid. Credit
+	 * notifications (customer payments) go through the standard flow.
+	 */
+	@Override
+	protected List<PaymentExtendedRecord> createPayments(Properties props) throws Exception {
+
+		initReader();
+
+		if (camt54.isDebitNotification()) {
+			m_notProcessedPayments.clear();
+			m_payments = camt54.createDebitPayments(props);
+			return m_payments;
+		}
+
+		return super.createPayments(props);
+	}
+
+	private void initReader() throws Exception {
+		if (camt54!=null) return;
+		camt54 = new CAMT54PaymentFactory(this);
+		if (!camt54.initFileReading()) {
+			camt54 = null;
+			throw new Exception("The file " + (getFile()!=null ? getFile().getName() : "")
+					+ " could not be read as a CAMT-54 (camt.054.001.02) file.");
+		}
+	}
+
+	/**
 	 * If following property is set, only receivables are read
 	 *
 	 * receivables = true
@@ -67,15 +97,25 @@ public class Iso20022PaymentFactory extends PaymentFactory {
 	protected List<PaymentExtendedRecord> getSourcePayments(Properties props)
 			throws Exception {
 
-		camt54 = new CAMT54PaymentFactory(this);
+		initReader();
+		return camt54.getSourcePayments(props);
 
-		if (camt54.initFileReading()) {
-			return camt54.getSourcePayments(props);
-		}
+	}
 
-		throw new Exception("The file " + (getFile()!=null ? getFile().getName() : "")
-				+ " could not be read as a CAMT-54 (camt.054.001.02) file.");
+	public void addNotProcessed(PaymentExtendedRecord rec) {
+		m_notProcessedPayments.add(rec);
+	}
 
+	public boolean isAutoCompleteEnabled() {
+		return m_autoComplete;
+	}
+
+	public double getAmountThreshold() {
+		return m_amountThreshold;
+	}
+
+	public int getOrgId() {
+		return m_orgId;
 	}
 
 	public MPayment createPayment(MBankAccount ba, MInvoice invoice,
