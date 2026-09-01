@@ -204,14 +204,18 @@ public class CAMT54PaymentFactory {
 				}
 			}
 
-			// The same safety valves as the standard flow: if most of the file
-			// could not be matched, save nothing.
+			// The same safety valve as the standard flow: if most of the file
+			// could not be matched, save nothing. Records that can never
+			// match (no or free-text reference) don't count against the ratio.
+			boolean disableDryRunCheck = props!=null
+					&& "Y".equals(props.getProperty(org.notima.bankgiro.adempiere.HeadlessPaymentPlugin.DISABLE_DRY_RUN_CHECK));
 			int notProcessed = 0;
+			int processed = 0;
 			for (PaymentExtendedRecord r : records) {
-				if (r.getAdempierePayment()==null) notProcessed++;
+				if (r.getAdempierePayment()!=null) processed++;
+				else if (!r.isNoMatchExpected()) notProcessed++;
 			}
-			int processed = records.size() - notProcessed;
-			if (processed < notProcessed && records.size() > 2) {
+			if (!disableDryRunCheck && processed < notProcessed && (processed + notProcessed) > 2) {
 				if (Ini.isClient()) {
 					JOptionPane.showMessageDialog(null,
 							"The number of payments to process is smaller than the number of not processed payments. Setting to dry run (nothing is saved)");
@@ -281,6 +285,7 @@ public class CAMT54PaymentFactory {
 			String ustrd = (ee.getRmtInf()!=null && !ee.getRmtInf().getUstrd().isEmpty())
 					? ee.getRmtInf().getUstrd().get(0) : endToEndId;
 			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ustrd!=null ? ustrd : ""));
+			rec.setNoMatchExpected(true);
 			records.add(rec);
 			return;
 		}
@@ -306,6 +311,12 @@ public class CAMT54PaymentFactory {
 			if (amount!=null) rec.setOrderSum(amount.doubleValue());
 			rec.setBpInvoiceNo(ref);
 			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ref!=null ? ref : ""));
+
+			// Free-text references ("Utlagg punktering", "Avser inbyte ...")
+			// are manual expense payments - expected not to match.
+			if (ref==null || amount==null || ref.indexOf(' ')>=0) {
+				rec.setNoMatchExpected(true);
+			}
 
 			MInvoice invoice = (ref!=null && amount!=null)
 					? matchVendorInvoice(ctx, ref, endToEndId, amount, localTrxName) : null;
@@ -687,14 +698,24 @@ public class CAMT54PaymentFactory {
 			}
 		} else {
 			setInvoiceReferenceFromTransaction(rec, ee);
+
+			// Cyberphoto: web/Swish payments carry the order number in
+			// EndToEndId rather than an invoice number. Setting it as order
+			// no as well lets the fallback matching in PaymentFactory look up
+			// the invoice via the order. Only EndToEndId references qualify -
+			// remittance-block references are third-party numbers that can
+			// collide with unrelated order numbers.
+			String e2e = ee.getRefs()!=null ? ee.getRefs().getEndToEndId() : null;
+			if (e2e!=null && e2e.equals(rec.getInvoiceNo())) {
+				rec.setOrderNo(e2e);
+			}
 		}
 
-		// Cyberphoto: web/Swish payments carry the order number as reference
-		// rather than the invoice number. Setting it as order no as well lets
-		// the fallback matching in PaymentFactory look up the invoice via the
-		// order when no invoice matches the reference directly.
-		if (rec.getInvoiceNo()!=null && rec.getInvoiceNo().trim().length()>0) {
-			rec.setOrderNo(rec.getInvoiceNo());
+		// Records without a usable reference (aggregator payouts, bank
+		// charges, foreign refs) can never match - report them, but keep them
+		// out of the dry-run safety-valve ratio.
+		if (rec.getInvoiceNo()==null || !isUsableReference(rec.getInvoiceNo())) {
+			rec.setNoMatchExpected(true);
 		}
 
 		if (partAmount != null) {

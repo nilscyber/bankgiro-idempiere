@@ -58,6 +58,7 @@ public class PaymentExtendedRecord {
 	private String bankAccount;
 	private boolean forceAsCustomerPayment;
 	private boolean forceComplete;
+	private boolean noMatchExpected;
 	private List<String>	messages;
 	
 	// Map for arbitrary parameters.
@@ -239,6 +240,17 @@ public class PaymentExtendedRecord {
 	
 	public void setForceComplete(boolean flag) {
 		forceComplete = true;
+	}
+
+	// Set when the record can never match by design (aggregator payouts,
+	// bank charges, references that are not ours). These are reported as not
+	// processed but excluded from the dry-run safety-valve ratio.
+	public boolean isNoMatchExpected() {
+		return noMatchExpected;
+	}
+
+	public void setNoMatchExpected(boolean flag) {
+		noMatchExpected = flag;
 	}
 	
 	public String getTaxId() {

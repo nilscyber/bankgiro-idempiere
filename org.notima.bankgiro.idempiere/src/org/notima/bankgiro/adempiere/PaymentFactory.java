@@ -1219,18 +1219,26 @@ public abstract class PaymentFactory  implements Runnable {
 				
 		}
 		if (!disableDryRunCheck) {
+			// Records that can never match by design (aggregator payouts like
+			// Qliro/Bambora, bank charges) don't count against the ratio -
+			// otherwise a quiet day trips the valve on records the reader
+			// knows are manual.
+			int unexpectedNotProcessed = 0;
+			for (PaymentExtendedRecord r : m_notProcessedPayments) {
+				if (!r.isNoMatchExpected()) unexpectedNotProcessed++;
+			}
 			// Safety measure I
-			if (paymentsToProcess.size()<m_notProcessedPayments.size() && (paymentsToProcess.size()+m_notProcessedPayments.size())>2) {
+			if (paymentsToProcess.size()<unexpectedNotProcessed && (paymentsToProcess.size()+unexpectedNotProcessed)>2) {
 				if (Ini.isClient()) {
 					JOptionPane.showMessageDialog(null, "The number of payments to process is smaller than the number of not processed payments. Setting to dry run (nothing is saved)");
 				}
 				m_dryRun = true;
-				
+
 			}
 			// Safety measure II
-			if (m_notProcessedPayments.size() > MAX_UNCOMPLETED_PAYMENTS) {
+			if (unexpectedNotProcessed > MAX_UNCOMPLETED_PAYMENTS) {
 				if (Ini.isClient()) {
-				JOptionPane.showMessageDialog(null, "The number of not processed payments is higher than max allowed (" + MAX_UNCOMPLETED_PAYMENTS + "). " + 
+				JOptionPane.showMessageDialog(null, "The number of not processed payments is higher than max allowed (" + MAX_UNCOMPLETED_PAYMENTS + "). " +
 													"Setting to dry run (nothing is saved)");
 				}
 				m_dryRun = true;

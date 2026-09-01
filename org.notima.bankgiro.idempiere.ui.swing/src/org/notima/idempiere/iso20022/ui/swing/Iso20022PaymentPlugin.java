@@ -155,6 +155,12 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
     	} else {
     		fc = new JFileChooser();
     	}
+
+    	// Escape hatch for files dominated by unmatchable records: skip the
+    	// fewer-matched-than-unmatched dry-run safety valve for this run.
+    	javax.swing.JCheckBox disableThreshold = new javax.swing.JCheckBox(
+    			"<html>Disable dry-run<br>safety threshold</html>");
+    	fc.setAccessory(disableThreshold);
         // Select file to open
 
     	if (receivablesOnly) {
@@ -201,6 +207,8 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
             	Iso20022PaymentFactory process = new Iso20022PaymentFactory(m_lbSettings, Env.getCtx());
             	if (receivablesOnly)
             		process.setProperty(Iso20022PaymentFactory.PROP_RECEIVABLES_ONLY, "Y");
+            	if (disableThreshold.isSelected())
+            		process.setProperty(org.notima.bankgiro.adempiere.HeadlessPaymentPlugin.DISABLE_DRY_RUN_CHECK, "Y");
             	process.setFile(reportFile);
             	runCreateIsoPayments(process);
 
