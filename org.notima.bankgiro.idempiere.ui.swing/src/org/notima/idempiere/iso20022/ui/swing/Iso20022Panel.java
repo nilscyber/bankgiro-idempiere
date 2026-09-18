@@ -12,6 +12,7 @@
 package org.notima.idempiere.iso20022.ui.swing;
 
 import java.util.SortedMap;
+import org.notima.idempiere.iso20022.Iso20022FileFactory;
 import org.notima.idempiere.iso20022.Iso20022Settings;
 import org.notima.bankgiro.adempiere.form.I_LBSettingsPanel;
 import org.notima.bankgiro.adempiere.form.XX_LBSettingsDialog;
@@ -33,6 +34,17 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
     /** Creates new form Iso20022Panel */
     public Iso20022Panel() {
         initComponents();
+        // Added by hand, outside the generated block so the form editor
+        // leaves it alone: batch booking flag for outbound pain.001 files.
+        batchBookingCheck = new javax.swing.JCheckBox();
+        batchBookingCheck.setText("Batch booking (one combined debit on the bank statement per payment run)");
+        java.awt.GridBagConstraints gbc = new java.awt.GridBagConstraints();
+        gbc.gridy = 3;
+        gbc.gridx = 0;
+        gbc.gridwidth = java.awt.GridBagConstraints.REMAINDER;
+        gbc.anchor = java.awt.GridBagConstraints.WEST;
+        gbc.insets = new java.awt.Insets(0, 4, 4, 4);
+        createFilePanel.add(batchBookingCheck, gbc);
     }
 
     public void initPanel(XX_LBSettingsDialog parent, SortedMap<String, MLBSettings> settings) {
@@ -46,6 +58,7 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
         MLBSettings.setSetting(Iso20022Settings.ISO20022_OUTPUT_DIR, directoryText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_FILE_NAME, fileNameText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_ADD_TS, addTimeToFileCheck.isSelected() ? "Y" : "N");
+        MLBSettings.setSetting(Iso20022FileFactory.ISO20022_BATCH_BOOKING, batchBookingCheck.isSelected() ? "Y" : "N");
         MLBSettings.setSetting(Iso20022Settings.ISO20022_FILE_SUFFIX, fileSuffixText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_RECONCILIATION_DIR, defaultDirText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_RECONCILIATION_MOVETO_DIR, archiveDirText.getText());
@@ -60,6 +73,8 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
         fileNameText.setText(fileName!=null ? fileName.getName() : "BGDATA");
         MLBSettings addTime = m_settings.get(Iso20022Settings.ISO20022_ADD_TS);
         addTimeToFileCheck.setSelected(addTime!=null && "Y".equalsIgnoreCase(addTime.getName()));
+        MLBSettings batchBooking = m_settings.get(Iso20022FileFactory.ISO20022_BATCH_BOOKING);
+        batchBookingCheck.setSelected(batchBooking!=null && "Y".equalsIgnoreCase(batchBooking.getName()));
         MLBSettings fileSuffix = m_settings.get(Iso20022Settings.ISO20022_FILE_SUFFIX);
         fileSuffixText.setText(fileSuffix!=null ? fileSuffix.getName() : "xml");
 
@@ -266,6 +281,9 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
     private javax.swing.JTextField fileSuffixText;
     private javax.swing.JPanel readFilesPanel;
     // End of variables declaration//GEN-END:variables
+
+    // Hand-added, not managed by the form editor
+    private javax.swing.JCheckBox batchBookingCheck;
 
     @Override
     public String getTitle() {

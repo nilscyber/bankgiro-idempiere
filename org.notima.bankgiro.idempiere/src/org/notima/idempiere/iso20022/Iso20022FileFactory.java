@@ -127,12 +127,6 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 			msgId = MLBSettings.setSystemSetting(ISO20022_MSGID, "1");
 		}
 
-		MLBSettings batchBookingSetting = lbSettings.get(ISO20022_BATCH_BOOKING);
-		if (batchBookingSetting==null) {
-			batchBookingSetting = MLBSettings.setSystemSetting(ISO20022_BATCH_BOOKING, "N");
-		}
-		batchBooking = "Y".equalsIgnoreCase(batchBookingSetting.getName());
-
 	}
 
 	/**
@@ -205,6 +199,12 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 		ba = srcAccount;
 		payments = suggestedPayments;
 		Properties ctx = Env.getCtx();
+
+		// Read at file creation, not construction: the factory instance is
+		// cached in the registry, but the setting can change from the LB
+		// settings dialog at any time.
+		MLBSettings batchBookingSetting = lbSettings.get(ISO20022_BATCH_BOOKING);
+		batchBooking = batchBookingSetting!=null && "Y".equalsIgnoreCase(batchBookingSetting.getName());
 
 		Document doc = new Document();
 		CustomerCreditTransferInitiationV03 init = new CustomerCreditTransferInitiationV03();
