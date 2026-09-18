@@ -7,7 +7,9 @@ import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.SortedMap;
 
@@ -77,6 +79,9 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 	
 	public static String ISO20022_MSGPREFIX = "ISO20022_MSGPREFIX";
 	public static String ISO20022_MSGID = "IS020022_MSGID";
+	// Y = batch booking (one debit on the statement per execution date),
+	// N = single booking (one debit per payment, the bank's view of the current file layout)
+	public static String ISO20022_BATCH_BOOKING = "ISO20022_BATCH_BOOKING";
 	
 	public static DateFormat	df = new SimpleDateFormat("yyyy-MM-dd");
 
@@ -91,6 +96,7 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 	
 	private MLBSettings 		msgPrefix;
 	private MLBSettings 		msgId;
+	private boolean				batchBooking;
 	private int					currentFileId;
 	private String				currentMsgId;
 	private int					currentPaymentId;
@@ -120,7 +126,13 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 		if (msgId==null) {
 			msgId = MLBSettings.setSystemSetting(ISO20022_MSGID, "1");
 		}
-		
+
+		MLBSettings batchBookingSetting = lbSettings.get(ISO20022_BATCH_BOOKING);
+		if (batchBookingSetting==null) {
+			batchBookingSetting = MLBSettings.setSystemSetting(ISO20022_BATCH_BOOKING, "N");
+		}
+		batchBooking = "Y".equalsIgnoreCase(batchBookingSetting.getName());
+
 	}
 
 	/**
@@ -250,17 +262,25 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 			LbPaymentBPartnerMap paymentBuckets = new LbPaymentBPartnerMap(payments);
 			
 			for (LbPaymentBucket bucket : paymentBuckets.getBuckets()) {
-				
+
 				pmt = convert(bafii, sender, countryCodeSrcAccount, bucket.getLbPaymentRows());
 				dstPaymentList.add(pmt);
 				currentPaymentId++;
-				
+
 			}
-			
+
+			if (batchBooking) {
+				mergeToBatchBooking(dstPaymentList);
+			}
+
 			// Number of transactions
 			// NbOfTxs
-			groupHeader.setNbOfTxs(Integer.toString(dstPaymentList.size()));
-			
+			int nbOfTxs = 0;
+			for (PaymentInstructionInformation3 p : dstPaymentList) {
+				nbOfTxs += p.getCdtTrfTxInf().size();
+			}
+			groupHeader.setNbOfTxs(Integer.toString(nbOfTxs));
+
 			
 		} catch (Exception e) {
 			MessageCenter.error(e.getMessage());
@@ -296,6 +316,37 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 		msgId.saveEx(trxName);
 		
 		return outFile;
+	}
+
+	/**
+	 * Merges the single-transaction payment instructions into one batch-booked
+	 * (BtchBookg=true) instruction per execution date and service level, so the
+	 * bank debits the account once per batch instead of once per payment.
+	 * SEPA payments keep their own instruction: the service level is set at the
+	 * instruction level and must not leak onto domestic payments.
+	 *
+	 * @param pmtList	the instruction list built by convert(), modified in place
+	 */
+	static void mergeToBatchBooking(List<PaymentInstructionInformation3> pmtList) {
+
+		Map<String, PaymentInstructionInformation3> carriers = new LinkedHashMap<String, PaymentInstructionInformation3>();
+
+		for (PaymentInstructionInformation3 pmt : pmtList) {
+			String svcLvl = pmt.getPmtTpInf()!=null && pmt.getPmtTpInf().getSvcLvl()!=null
+					? pmt.getPmtTpInf().getSvcLvl().getCd() : "";
+			String key = printISODate(pmt.getReqdExctnDt()) + "|" + svcLvl;
+			PaymentInstructionInformation3 carrier = carriers.get(key);
+			if (carrier==null) {
+				pmt.setBtchBookg(Boolean.TRUE);
+				carriers.put(key, pmt);
+			} else {
+				carrier.getCdtTrfTxInf().addAll(pmt.getCdtTrfTxInf());
+			}
+		}
+
+		pmtList.clear();
+		pmtList.addAll(carriers.values());
+
 	}
 
 	/**
