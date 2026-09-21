@@ -112,10 +112,22 @@ public class MLBSettings extends X_XC_LBSettings {
     }
 
     /**
+     * The Value column is 20 characters. A longer key is silently truncated
+     * by the generated setter, so the setting can be saved but never found
+     * again (bit us with ISO20022_BATCH_BOOKING, 22 chars, 2026-09-21).
+     */
+    private static void assertKeyFits(String key) {
+    	if (key!=null && key.length()>20) {
+    		throw new IllegalArgumentException("LB setting key '" + key + "' is longer than 20 characters and would be truncated (XC_LBSettings.Value)");
+    	}
+    }
+
+    /**
      * Sets a setting for the current user.
      */
     public static MLBSettings setSetting(String key, String name) {
     	try {
+    		assertKeyFits(key);
 	        Properties ctx = Env.getCtx();
 	        int AD_User_ID = Env.getAD_User_ID(ctx);
 	        int AD_Org_ID = Env.getAD_Org_ID(ctx);
@@ -145,6 +157,7 @@ public class MLBSettings extends X_XC_LBSettings {
      */
     public static MLBSettings setSystemSetting(String key, String name) {
     	try {
+    		assertKeyFits(key);
 	        Properties ctx = Env.getCtx();
 	        int AD_Org_ID = Env.getAD_Org_ID(ctx);
 	        CPreparedStatement ps = DB.prepareStatement("delete from " + MLBSettings.Table_Name + " WHERE (AD_User_ID=0 OR AD_User_ID is NULL) and Value=? and (AD_Org_ID=0 OR AD_Org_ID=?)", null);

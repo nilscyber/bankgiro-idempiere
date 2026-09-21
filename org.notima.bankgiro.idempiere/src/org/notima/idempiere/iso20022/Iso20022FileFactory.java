@@ -80,8 +80,9 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 	public static String ISO20022_MSGPREFIX = "ISO20022_MSGPREFIX";
 	public static String ISO20022_MSGID = "IS020022_MSGID";
 	// Y = batch booking (one debit on the statement per execution date),
-	// N = single booking (one debit per payment, the bank's view of the current file layout)
-	public static String ISO20022_BATCH_BOOKING = "ISO20022_BATCH_BOOKING";
+	// N = single booking (one debit per payment, the bank's view of the current file layout).
+	// The key must fit XC_LBSettings.Value (20 chars) or it is truncated on save.
+	public static String ISO20022_BATCH_BOOKING = "ISO2_BATCH_BOOKING";
 	
 	public static DateFormat	df = new SimpleDateFormat("yyyy-MM-dd");
 
