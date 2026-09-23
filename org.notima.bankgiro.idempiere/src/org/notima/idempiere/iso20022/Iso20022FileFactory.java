@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.GregorianCalendar;
@@ -321,33 +322,74 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 
 	/**
 	 * Merges the single-transaction payment instructions into one batch-booked
-	 * (BtchBookg=true) instruction per execution date and service level, so the
-	 * bank debits the account once per batch instead of once per payment.
-	 * SEPA payments keep their own instruction: the service level is set at the
-	 * instruction level and must not leak onto domestic payments.
+	 * (BtchBookg=true) instruction per execution date, service level and payment
+	 * rail, so the bank debits the account once per batch instead of once per
+	 * payment. A batch block must be homogeneous: file iso20022_551 (2026-09-22)
+	 * mixed bankgiro payments, account transfers and an international payment in
+	 * one block and SEB rejected every domestic transaction with FF03
+	 * InvalidPaymentTypeInformation, while the international one was accepted.
+	 * International payments are therefore never merged at all: they keep their
+	 * own single-booked instruction, the exact shape SEB has always accepted.
 	 *
 	 * @param pmtList	the instruction list built by convert(), modified in place
 	 */
 	static void mergeToBatchBooking(List<PaymentInstructionInformation3> pmtList) {
 
 		Map<String, PaymentInstructionInformation3> carriers = new LinkedHashMap<String, PaymentInstructionInformation3>();
+		List<PaymentInstructionInformation3> result = new ArrayList<PaymentInstructionInformation3>();
 
 		for (PaymentInstructionInformation3 pmt : pmtList) {
+			String rail = paymentRail(pmt);
+			if (RAIL_INTERNATIONAL.equals(rail)) {
+				// Untouched: no BtchBookg, own instruction
+				result.add(pmt);
+				continue;
+			}
 			String svcLvl = pmt.getPmtTpInf()!=null && pmt.getPmtTpInf().getSvcLvl()!=null
 					? pmt.getPmtTpInf().getSvcLvl().getCd() : "";
-			String key = printISODate(pmt.getReqdExctnDt()) + "|" + svcLvl;
+			String key = printISODate(pmt.getReqdExctnDt()) + "|" + svcLvl + "|" + rail;
 			PaymentInstructionInformation3 carrier = carriers.get(key);
 			if (carrier==null) {
 				pmt.setBtchBookg(Boolean.TRUE);
 				carriers.put(key, pmt);
+				result.add(pmt);
 			} else {
 				carrier.getCdtTrfTxInf().addAll(pmt.getCdtTrfTxInf());
 			}
 		}
 
 		pmtList.clear();
-		pmtList.addAll(carriers.values());
+		pmtList.addAll(result);
 
+	}
+
+	static final String RAIL_INTERNATIONAL = "INTL";
+	static final String RAIL_BANKGIRO = "BGNR";
+	static final String RAIL_ACCOUNT = "BBAN";
+
+	/**
+	 * Classifies a single-transaction payment instruction by payment rail.
+	 * International = cross-border: convert() sets the charge bearer only for
+	 * those, and a creditor account given as plain IBAN is also cross-border.
+	 * Domestic splits into bankgiro numbers (BGNR) and account transfers (BBAN,
+	 * which covers plusgiro and clearing+account numbers).
+	 */
+	static String paymentRail(PaymentInstructionInformation3 pmt) {
+		CreditTransferTransactionInformation10 trx = pmt.getCdtTrfTxInf().get(0);
+		if (trx.getChrgBr()!=null) {
+			return RAIL_INTERNATIONAL;
+		}
+		if (trx.getCdtrAcct()!=null && trx.getCdtrAcct().getId()!=null) {
+			AccountIdentification4Choice id = trx.getCdtrAcct().getId();
+			if (id.getIBAN()!=null) {
+				return RAIL_INTERNATIONAL;
+			}
+			if (id.getOthr()!=null && id.getOthr().getSchmeNm()!=null
+					&& "BGNR".equals(id.getOthr().getSchmeNm().getPrtry())) {
+				return RAIL_BANKGIRO;
+			}
+		}
+		return RAIL_ACCOUNT;
 	}
 
 	/**
