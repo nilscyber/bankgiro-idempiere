@@ -224,6 +224,7 @@ public class CAMT54PaymentFactory {
 			}
 
 			if (!paymentFactory.isDryRun()) {
+				createDraftsForUnmatched(ctx, records, localTrxName);
 				trx.commit();
 			} else {
 				trx.rollback();
@@ -306,11 +307,22 @@ public class CAMT54PaymentFactory {
 					amount = r.getRfrdDocAmt().getCdtNoteAmt().getValue().negate();
 				}
 			}
+			// A single remittance block without its own amount covers the
+			// whole transaction (trade-in payouts carry only a UETR line).
+			if (amount==null && strds.size()==1) {
+				amount = ee.getAmtDtls().getTxAmt().getAmt().getValue();
+			}
 
 			PaymentExtendedRecord rec = newDebitRecord(cdtrName, txCcy, trxDate);
 			if (amount!=null) rec.setOrderSum(amount.doubleValue());
 			rec.setBpInvoiceNo(ref);
-			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (ref!=null ? ref : ""));
+			// Without a structured reference the free-text line is the only
+			// description there is (trade-in payouts, expenses).
+			String descRef = ref;
+			if (descRef==null && ee.getRmtInf()!=null && !ee.getRmtInf().getUstrd().isEmpty()) {
+				descRef = ee.getRmtInf().getUstrd().get(0);
+			}
+			rec.setDescription((cdtrName!=null ? cdtrName + " : " : "") + (descRef!=null ? descRef : ""));
 
 			// Free-text references ("Utlagg punktering", "Avser inbyte ...")
 			// are manual expense payments - expected not to match.
@@ -378,6 +390,65 @@ public class CAMT54PaymentFactory {
 
 			records.add(rec);
 		}
+	}
+
+	/**
+	 * Every unmatched debit transaction gets a draft AP payment, mirroring the
+	 * receivables flow's unknown-payer drafts (economy request 2026-10-08):
+	 * the payment is prefilled with bank account, amount, currency, date and
+	 * description and left in Drafted status for manual completion, instead of
+	 * only appearing in the not-processed report. Typical cases: EUR payments,
+	 * ambiguous same-amount invoices, customer credits paid out, bank charges.
+	 * The business partner is matched on the counterparty name when that gives
+	 * exactly one hit, otherwise the unknown payer partner is used. The record
+	 * stays in the not-processed report with the draft's document number
+	 * appended, so nothing silently disappears. Runs inside the same
+	 * transaction as the matched payments: a dry run never creates drafts.
+	 */
+	private void createDraftsForUnmatched(Properties ctx, List<PaymentExtendedRecord> records, String trxName) {
+
+		for (PaymentExtendedRecord rec : records) {
+			if (rec.getAdempierePayment()!=null) continue;
+			if (rec.getBankAccountPtr()==null || rec.getTrxDate()==null) continue;
+			double amt = Math.round(rec.getOrderSum()*100)/100.0;
+			if (amt==0) continue;
+			try {
+				MPayment payment = new MPayment(ctx, 0, trxName);
+				payment.set_ValueOfColumn("AD_Client_ID", Integer.valueOf(paymentFactory.getClientId()));
+				payment.setAD_Org_ID(paymentFactory.getOrgId());
+				payment.setC_DocType_ID(false);		// AP Payment
+				payment.setIsReceipt(false);
+				payment.setC_BankAccount_ID(rec.getBankAccountPtr().get_ID());
+				int bpId = matchBPartnerByName(ctx, rec.getName(), trxName);
+				payment.setC_BPartner_ID(bpId>0 ? bpId : paymentFactory.getUnknownBPartnerId());
+				payment.setC_Currency_ID(MCurrency.get(ctx, rec.getCurrency()).get_ID());
+				payment.setC_ConversionType_ID(114);	// Spot
+				payment.setTenderType(org.notima.bankgiro.adempiere.BGPaymentModelValidator.TENDERTYPE_Bankgiro);
+				payment.setDescription(rec.getDescription());
+				payment.setDateAcct(new Timestamp(rec.getTrxDate().getTime()));
+				payment.setDateTrx(new Timestamp(rec.getTrxDate().getTime()));
+				payment.setAmount(payment.getC_Currency_ID(), new BigDecimal(Double.toString(amt)));
+				payment.saveEx(trxName);
+				rec.setDescription((rec.getDescription()!=null ? rec.getDescription() + " " : "")
+						+ "[utkast " + payment.getDocumentNo() + "]");
+			} catch (Exception ex) {
+				paymentFactory.getLogger().warning("Could not create draft payment for "
+						+ (rec.getName()!=null ? rec.getName() : "?") + ": " + ex.getMessage());
+			}
+		}
+	}
+
+	/**
+	 * Returns the business partner whose name equals the counterparty name,
+	 * but only when the match is unambiguous.
+	 */
+	private int matchBPartnerByName(Properties ctx, String name, String trxName) {
+		if (name==null || name.trim().length()==0) return 0;
+		List<MBPartner> hits = new Query(ctx, MBPartner.Table_Name,
+				"AD_Client_ID=? AND IsActive='Y' AND UPPER(TRIM(Name))=UPPER(?)", trxName)
+				.setParameters(new Object[]{ Env.getAD_Client_ID(ctx), name.trim() })
+				.list();
+		return hits.size()==1 ? hits.get(0).get_ID() : 0;
 	}
 
 	private PaymentExtendedRecord newDebitRecord(String cdtrName, String ccy, Date trxDate) {

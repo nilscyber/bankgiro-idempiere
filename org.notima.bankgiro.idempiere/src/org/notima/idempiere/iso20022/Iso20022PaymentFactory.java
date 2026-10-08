@@ -56,6 +56,10 @@ public class Iso20022PaymentFactory extends PaymentFactory {
 		return m_clientId;
 	}
 
+	public int getUnknownBPartnerId() {
+		return m_unknownBPartnerId;
+	}
+
 	/**
 	 * Debit notifications (our payments to vendors) are handled with their own
 	 * routine modeled on CreateLbPayments: match each remittance block to a
