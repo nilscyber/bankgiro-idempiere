@@ -609,7 +609,23 @@ public abstract class PaymentFactory  implements Runnable {
         if (!arReceipt) {
         	payAmount = -payAmount;
         }
-        
+
+        // A chargeback or refund reuses the ORIGINAL transaction's payment
+        // reference (seen on a Qliro/Two chargeback 2026-10-19), so the
+        // payment found by R_PnRef above is the original with the opposite
+        // sign - not a duplicate of this record. Re-match against a payment
+        // in the same direction; when there is none yet, fall through to the
+        // creation path below so the reversal gets its own payment. A re-read
+        // of the same file then finds the reversal here and attaches to it.
+        if (payment!=null && payAmount!=0
+        		&& payment.getPayAmt().doubleValue()*payAmount < 0) {
+        	payment = new Query(ctx, MPayment.Table_Name,
+        			"R_PnRef=? AND C_BankAccount_ID=? AND NOT DocStatus IN ('VO') AND SIGN(PayAmt)=?", trxName)
+        			.setParameters(new Object[]{ paymentReference, ourBankAccountID,
+        					Integer.valueOf(payAmount>0 ? 1 : -1) })
+        			.first();
+        }
+
     	// If payment wasn't found using payment reference
     	if (payment==null) {
 	        payment = new MPayment(ctx, 0, trxName);
