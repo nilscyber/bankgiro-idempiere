@@ -519,8 +519,19 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 
 		MLocation loc = getRemitToLocation(firstLpr.getBpartner());
 		
-		boolean crossCountry = loc!=null && !countryCodeSrcAccount.equalsIgnoreCase(loc.getCountry().getCountryCode());
-		
+		// The payment rail decides cross-border handling, not the vendor's
+		// postal address: a payment to a Swedish bankgiro/plusgiro/account is
+		// domestic even when the vendor is addressed abroad (EET Retail ApS
+		// in Denmark pays via bankgiro 501-6134), and charge bearer plus
+		// regulatory reporting do not belong on the domestic rails.
+		boolean domesticRail =
+				bau.getAccountType() == BankAccountUtil.BankAccountType.BANKGIRO
+				|| bau.getAccountType() == BankAccountUtil.BankAccountType.PLUSGIRO
+				|| bau.getAccountType() == BankAccountUtil.BankAccountType.DOMESTIC_BANKACCT;
+
+		boolean crossCountry = !domesticRail && loc!=null
+				&& !countryCodeSrcAccount.equalsIgnoreCase(loc.getCountry().getCountryCode());
+
 		if (bau.getAccountType() == BankAccountUtil.BankAccountType.IBAN) {
 			crossCountry = true;
 			if ("EUR".equalsIgnoreCase(firstLpr.currency)) {
@@ -586,13 +597,27 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 	private AccountIdentification4Choice convert(String countryCode, MBPBankAccount receiverBankAccount) throws Exception {
 
 		BankAccountUtil bau = BankAccountUtil.buildFromMBPBankAccount(receiverBankAccount);
-		
+
         String iban = BgUtil.removeBlanks(bau.getIban());
-        
+
         AccountIdentification4Choice result = new AccountIdentification4Choice();
     	GenericAccountIdentification1 other = new GenericAccountIdentification1();
     	AccountSchemeName1Choice ascheme = new AccountSchemeName1Choice();
-        
+
+        // Follow BankAccountUtil's account type: a bankgiro outranks a
+        // foreign IBAN stored on the same row. Taking the IBAN here while
+        // getCreditorAgent() picks Bankgirot from the account type produced
+        // a payment with a Danish IBAN and a Swedish clearing id as the
+        // creditor bank - SEB rejected every one with RC04
+        // InvalidCreditorBankIdentifier (EET Retail ApS, file iso20022_558).
+        if (bau.getAccountType().equals(BankAccountUtil.BankAccountType.BANKGIRO)) {
+        	other.setId(BgUtil.toDigitsOnly(bau.getDstAcct()));
+        	ascheme.setPrtry("BGNR");
+        	other.setSchmeNm(ascheme);
+        	result.setOthr(other);
+        	return result;
+        }
+
         if (iban!=null && iban.trim().length()>0) {
 	        if (iban.startsWith(countryCode) && bau.getAccountNo()!=null && bau.getAccountNo().trim().length()>0) {
 	        	String routingNo = receiverBankAccount.getRoutingNo();
@@ -612,15 +637,7 @@ public class Iso20022FileFactory implements PaymentFileFactory {
 	        }
 	        return result;
         }
-        
-        if (bau.getAccountType().equals(BankAccountUtil.BankAccountType.BANKGIRO)) {
-        	other.setId(BgUtil.toDigitsOnly(bau.getDstAcct()));
-        	ascheme.setPrtry("BGNR");
-        	other.setSchmeNm(ascheme);
-        	result.setOthr(other);
-        	return result;
-        }
-        
+
         if (bau.getAccountType().equals(BankAccountUtil.BankAccountType.PLUSGIRO) ||
         		bau.getAccountType().equals(BankAccountUtil.BankAccountType.DOMESTIC_BANKACCT)
         		) {
