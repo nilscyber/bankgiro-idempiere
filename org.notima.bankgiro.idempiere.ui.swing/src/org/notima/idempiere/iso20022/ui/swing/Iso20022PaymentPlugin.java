@@ -28,6 +28,7 @@ import org.notima.bankgiro.adempiere.PaymentFileFactory;
 import org.notima.bankgiro.adempiere.PaymentFileWorker;
 import org.notima.bankgiro.adempiere.PluginRegistry;
 import org.notima.idempiere.iso20022.Iso20022FileFactory;
+import org.notima.idempiere.iso20022.SebSepaCsvFileFactory;
 import org.notima.bankgiro.adempiere.form.I_LBSettingsPanel;
 import org.notima.bankgiro.adempiere.form.VLBManagementPanel;
 import org.notima.bankgiro.adempiere.model.MLBFile;
@@ -51,6 +52,7 @@ import net.sf.jasperreports.engine.data.JRBeanCollectionDataSource;
 public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 	private Action			m_actionCreateFile;
+	private Action			m_actionCreateSepaCsv;
 	private Action			m_actionReadFile;
 	private Action			m_actionReadReceivables;
 
@@ -71,6 +73,20 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 		};
 		m_actionCreateFile.putValue(Action.NAME, "Create ISO20022 File");
+
+		m_actionCreateSepaCsv = new AbstractAction() {
+
+			private static final long serialVersionUID = 1L;
+
+			@Override
+			public void actionPerformed(ActionEvent e) {
+				createSepaCsvFile();
+			}
+
+		};
+		m_actionCreateSepaCsv.putValue(Action.NAME, "Create SEB SEPA CSV File");
+		m_actionCreateSepaCsv.putValue(Action.SHORT_DESCRIPTION,
+				"SEPA payments (EUR, IBAN+BIC) as a CSV file for upload in SEB's internet bank");
 
 		m_actionReadFile = new AbstractAction() {
 
@@ -105,17 +121,42 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 	 */
 	private void createFile() {
 
-        // Iterate through all rows in the table, skip the ones with wrong currency
-        List<LbPaymentRow> checkedRows = m_frame.getPayablesModel().getSelected();
-
-        MBankAccount senderBankAccount = m_frame.getSelectedBankAccount();
-
         PaymentFileFactory f = PluginRegistry.registry.getFileFactory(Iso20022FileFactory.KEY);
 
         if (f==null) {
         	f = new Iso20022FileFactory();
         	PluginRegistry.registry.addPaymentFileFactory(f);
         }
+
+        createFileWith(f);
+	}
+
+	/**
+	 * Creates a SEPA CSV file for upload in SEB's internet bank, in the same
+	 * output directory as the PAIN files. Called from m_actionCreateSepaCsv.
+	 */
+	private void createSepaCsvFile() {
+
+        PaymentFileFactory f = PluginRegistry.registry.getFileFactory(SebSepaCsvFileFactory.KEY);
+
+        if (f==null) {
+        	f = new SebSepaCsvFileFactory();
+        	PluginRegistry.registry.addPaymentFileFactory(f);
+        }
+
+        createFileWith(f);
+	}
+
+	/**
+	 * Runs the given file factory on the selected payable rows and the
+	 * selected source bank account, then refreshes the window.
+	 */
+	private void createFileWith(PaymentFileFactory f) {
+
+        // Iterate through all rows in the table, skip the ones with wrong currency
+        List<LbPaymentRow> checkedRows = m_frame.getPayablesModel().getSelected();
+
+        MBankAccount senderBankAccount = m_frame.getSelectedBankAccount();
 
         MLBSettings oDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_OUTPUT_DIR);
         String outputDir =  oDir!=null ? oDir.getName() : null;
@@ -395,7 +436,7 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 	@Override
 	public Action[] getActions() {
-		return new Action[]{m_actionCreateFile, m_actionReadFile};
+		return new Action[]{m_actionCreateFile, m_actionCreateSepaCsv, m_actionReadFile};
 	}
 
 	@Override
@@ -405,7 +446,7 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
 
 	@Override
 	public Action[] getPayableActions() {
-		return new Action[]{m_actionCreateFile, m_actionReadFile};
+		return new Action[]{m_actionCreateFile, m_actionCreateSepaCsv, m_actionReadFile};
 	}
 
 	@Override
