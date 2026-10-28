@@ -17,6 +17,9 @@ public class Iso20022Settings {
     public static final String ISO20022_FILE_SUFFIX = "ISO2_FILE_SUFFIX";
     public static final String ISO20022_RECONCILIATION_DIR = "ISO2_RECONCILE_DIR";
     public static final String ISO20022_RECONCILIATION_MOVETO_DIR = "ISO2_RECON_MDIR";
+    // Output directory for SEB SEPA CSV files; falls back to ISO20022_OUTPUT_DIR when empty.
+    // Keys must fit XC_LBSettings.Value (20 chars).
+    public static final String ISO20022_SEPA_OUTPUT_DIR = "ISO2_SEPA_OUT_DIR";
 
     // On the idempiere-3.1 branch this constant lives in Iso20022FileFactory,
     // which is not ported here (outbound PAIN is not used on this branch).

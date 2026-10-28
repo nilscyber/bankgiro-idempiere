@@ -45,6 +45,45 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
         gbc.anchor = java.awt.GridBagConstraints.WEST;
         gbc.insets = new java.awt.Insets(0, 4, 4, 4);
         createFilePanel.add(batchBookingCheck, gbc);
+
+        // SEB SEPA CSV files get their own directory (empty = the ISO directory)
+        sepaDirLabel = new javax.swing.JLabel("SEPA CSV directory");
+        sepaDirLabel.setHorizontalAlignment(javax.swing.SwingConstants.RIGHT);
+        gbc = new java.awt.GridBagConstraints();
+        gbc.gridy = 4;
+        gbc.gridx = 0;
+        gbc.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        gbc.insets = new java.awt.Insets(0, 4, 4, 4);
+        createFilePanel.add(sepaDirLabel, gbc);
+        sepaDirText = new javax.swing.JTextField();
+        sepaDirText.setToolTipText("Where SEB SEPA CSV files are written; empty = the output directory above");
+        gbc = new java.awt.GridBagConstraints();
+        gbc.gridy = 4;
+        gbc.gridx = 1;
+        gbc.gridwidth = 2;
+        gbc.fill = java.awt.GridBagConstraints.HORIZONTAL;
+        gbc.weightx = 1.0;
+        gbc.insets = new java.awt.Insets(0, 0, 4, 4);
+        createFilePanel.add(sepaDirText, gbc);
+        browseSepaDirButton = new javax.swing.JButton("Browse");
+        browseSepaDirButton.setMargin(new java.awt.Insets(2, 6, 2, 6));
+        browseSepaDirButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                MLBSettings cur = m_settings.get(Iso20022Settings.ISO20022_SEPA_OUTPUT_DIR);
+                String startDir = cur != null && cur.getName() != null && cur.getName().trim().length() > 0
+                        ? cur.getName() : directoryText.getText();
+                String newDir = m_parentDialog.browseForDirectory(startDir);
+                if (newDir != null) {
+                    sepaDirText.setText(newDir);
+                    getForm();
+                }
+            }
+        });
+        gbc = new java.awt.GridBagConstraints();
+        gbc.gridy = 4;
+        gbc.gridx = 3;
+        gbc.insets = new java.awt.Insets(0, 0, 4, 0);
+        createFilePanel.add(browseSepaDirButton, gbc);
     }
 
     public void initPanel(XX_LBSettingsDialog parent, SortedMap<String, MLBSettings> settings) {
@@ -59,6 +98,7 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
         MLBSettings.setSetting(Iso20022Settings.ISO20022_FILE_NAME, fileNameText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_ADD_TS, addTimeToFileCheck.isSelected() ? "Y" : "N");
         MLBSettings.setSetting(Iso20022FileFactory.ISO20022_BATCH_BOOKING, batchBookingCheck.isSelected() ? "Y" : "N");
+        MLBSettings.setSetting(Iso20022Settings.ISO20022_SEPA_OUTPUT_DIR, sepaDirText.getText().trim());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_FILE_SUFFIX, fileSuffixText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_RECONCILIATION_DIR, defaultDirText.getText());
         MLBSettings.setSetting(Iso20022Settings.ISO20022_RECONCILIATION_MOVETO_DIR, archiveDirText.getText());
@@ -75,6 +115,8 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
         addTimeToFileCheck.setSelected(addTime!=null && "Y".equalsIgnoreCase(addTime.getName()));
         MLBSettings batchBooking = m_settings.get(Iso20022FileFactory.ISO20022_BATCH_BOOKING);
         batchBookingCheck.setSelected(batchBooking!=null && "Y".equalsIgnoreCase(batchBooking.getName()));
+        MLBSettings sepaDir = m_settings.get(Iso20022Settings.ISO20022_SEPA_OUTPUT_DIR);
+        sepaDirText.setText(sepaDir!=null && sepaDir.getName()!=null ? sepaDir.getName() : "");
         MLBSettings fileSuffix = m_settings.get(Iso20022Settings.ISO20022_FILE_SUFFIX);
         fileSuffixText.setText(fileSuffix!=null ? fileSuffix.getName() : "xml");
 
@@ -284,6 +326,9 @@ public class Iso20022Panel extends javax.swing.JPanel implements I_LBSettingsPan
 
     // Hand-added, not managed by the form editor
     private javax.swing.JCheckBox batchBookingCheck;
+    private javax.swing.JLabel sepaDirLabel;
+    private javax.swing.JTextField sepaDirText;
+    private javax.swing.JButton browseSepaDirButton;
 
     @Override
     public String getTitle() {

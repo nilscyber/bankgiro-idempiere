@@ -128,12 +128,12 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
         	PluginRegistry.registry.addPaymentFileFactory(f);
         }
 
-        createFileWith(f);
+        createFileWith(f, null);
 	}
 
 	/**
-	 * Creates a SEPA CSV file for upload in SEB's internet bank, in the same
-	 * output directory as the PAIN files. Called from m_actionCreateSepaCsv.
+	 * Creates a SEPA CSV file for upload in SEB's internet bank. Called from
+	 * m_actionCreateSepaCsv.
 	 */
 	private void createSepaCsvFile() {
 
@@ -144,22 +144,39 @@ public class Iso20022PaymentPlugin extends PaymentPlugin {
         	PluginRegistry.registry.addPaymentFileFactory(f);
         }
 
-        createFileWith(f);
+        // Own directory when set, otherwise the PAIN files' directory
+        MLBSettings sepaDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_SEPA_OUTPUT_DIR);
+        String dir = sepaDir!=null && sepaDir.getName()!=null && sepaDir.getName().trim().length()>0
+        		? sepaDir.getName().trim() : null;
+
+        createFileWith(f, dir);
 	}
 
 	/**
 	 * Runs the given file factory on the selected payable rows and the
 	 * selected source bank account, then refreshes the window.
+	 *
+	 * @param f				the file factory
+	 * @param outputDir		directory to write to; null = the ISO20022 output directory setting
 	 */
-	private void createFileWith(PaymentFileFactory f) {
+	private void createFileWith(PaymentFileFactory f, String outputDir) {
 
         // Iterate through all rows in the table, skip the ones with wrong currency
         List<LbPaymentRow> checkedRows = m_frame.getPayablesModel().getSelected();
 
         MBankAccount senderBankAccount = m_frame.getSelectedBankAccount();
 
-        MLBSettings oDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_OUTPUT_DIR);
-        String outputDir =  oDir!=null ? oDir.getName() : null;
+        if (outputDir==null) {
+	        MLBSettings oDir = PluginRegistry.registry.getLbSettings().get(Iso20022Settings.ISO20022_OUTPUT_DIR);
+	        outputDir =  oDir!=null ? oDir.getName() : null;
+        }
+
+        if (outputDir!=null && !new File(outputDir).isDirectory()) {
+        	MessageCenter.error(null, "Output directory not found",
+        			"The output directory " + outputDir + " does not exist on this computer."
+        			+ " Check the ISO20022 settings (the setting is per user).");
+        	return;
+        }
 
         if (outputDir==null) {
         	MessageCenter.error(null, "No output dir", "No output directory defined for ISO20022-files");
